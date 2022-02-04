@@ -75,8 +75,6 @@ class Exploration_Env(habitat.RLEnv):
 
         self.sem_pred = SemanticPredMaskRCNN(args)
 
-        self.obj_num = 5
-
         #-----objects related initialzation-----#
         self.sim_count = 0
         self.sim_object_to_objid_mapping = {}
@@ -88,7 +86,11 @@ class Exploration_Env(habitat.RLEnv):
         self.path = []
         self.direction = 1
         self.object_cur_loc = None
+        self.obj_num = 5
         
+        self.x = None
+        self.y = None
+        self.o = None
 
         #self._initialize_object()
 
@@ -112,7 +114,6 @@ class Exploration_Env(habitat.RLEnv):
         config_env.defrost()
         config_env.SIMULATOR.ACTION_SPACE_CONFIG = \
                 "CustomActionSpaceConfiguration"
-                
         config_env.freeze()
 
 
@@ -258,11 +259,10 @@ class Exploration_Env(habitat.RLEnv):
         #! Initializa object map
 
         # try to get object position
-        if len(self.path)>0 :
-            obj_sim_pos = self.path[0].points[0]
-            dxo_gt, dyo_gt, doo_gt = pu.get_rel_pose_change(self.last_sim_location, self.get_object_location(obj_sim_pos))
-            self.object_cur_loc = pu.get_new_pose(self.curr_loc_gt,
-                                (dxo_gt, dyo_gt, doo_gt))
+        obj_sim_pos = self.path[0].points[0]
+        dxo_gt, dyo_gt, doo_gt = pu.get_rel_pose_change(self.last_sim_location, self.get_object_location(obj_sim_pos))
+        self.object_cur_loc = pu.get_new_pose(self.curr_loc_gt,
+                               (dxo_gt, dyo_gt, doo_gt))
 
         # Convert pose to cm and degrees for mapper
         mapper_gt_pose = (self.curr_loc_gt[0]*100.0,
@@ -300,18 +300,21 @@ class Exploration_Env(habitat.RLEnv):
 
         args = self.args
         self.timestep += 1
+        full_map_size = args.map_size_cm//args.map_resolution
 
-        if len(self.objects)>0:
         # moving object within each step
-            for i in range(len(self.objects)):
-                if self.direction and self.path_step  < len(self.path[i].points):
-                    self.objects[i].translation = np.array(self.path[i].points[self.path_step])
-                    self.path_step += 1
-                elif self.path_step ==0 or self.path_step == len(self.path[i].points):
-                    self.direction = -1 * self.direction
-                elif not self.direction and self.path_step > 0:
-                    self.objects[i].translation = np.array(self.path[i].points[self.path_step])
-                    self.path_step -= 1
+        for i in range(len(self.objects)):
+            if self.direction and self.path_step  < len(self.path[i].points):
+                self.objects[i].translation = np.array(self.path[i].points[self.path_step])
+                self.path_step += 1
+            elif self.path_step ==0 or self.path_step == len(self.path[i].points):
+                self.direction = -1 * self.direction
+            elif not self.direction and self.path_step > 0:
+                self.objects[i].translation = np.array(self.path[i].points[self.path_step])
+                self.path_step -= 1
+
+            #! takes too much time, FPS drops down lower than 1.
+            #obj_x, obj_y = self._get_topdown_point(full_map_size, i)
 
         # Action remapping
         if action == 2: # Forward
@@ -691,28 +694,15 @@ class Exploration_Env(habitat.RLEnv):
             if not os.path.exists(ep_dir):
                 os.makedirs(ep_dir)
 
-
-            # obj_x, obj_y, obj_z = self.objects[0].translation.b, \
-            #     self.objects[0].translation.g ,self.objects[0].translation.r
-            # obj_sim_pos = [obj_x, obj_y, obj_z]
-            # dxo_gt, dyo_gt, doo_gt = pu.get_rel_pose_change(self.last_sim_location, self.get_object_location(obj_sim_pos))
-            # object_cur_loc = pu.get_new_pose(self.curr_loc_gt,
-            #                     (dxo_gt, dyo_gt, doo_gt))
-
-            # goal_ = [0, 0]
-            # goal_[0], goal_[1], _ = object_cur_loc
-            # goal_[0] = int(goal_[0] * 10)
-            # goal_[1] = int(goal_[1] * 10)
-
             if args.vis_type == 1: # Visualize predicted map and pose
                 #! TESTING
                 #! TODO
                 # 1. caculate the rel distance between agent sim location and object sim location
                 #           at EACH timestep before feeded into vu.get_color_map
-                goal[0], goal[1], _ = self.object_cur_loc
+                #goal[0], goal[1], _ = self.object_cur_loc
 
                         # try to get object position
-                obj_sim_pos = self.path[0].points[0]
+                #obj_sim_pos = self.path[0].points[0]
                 obj_x, obj_y, obj_z = self.objects[0].translation.b, \
                     self.objects[0].translation.g ,self.objects[0].translation.r
                 obj_sim_pos = [obj_x, obj_y, obj_z]
@@ -721,15 +711,16 @@ class Exploration_Env(habitat.RLEnv):
                                     (dxo_gt, dyo_gt, doo_gt))
 
                 goal_ = [0, 0]
+                #goal_[0], goal_[1], _ = self.object_cur_loc
                 goal_[0], goal_[1], _ = object_cur_loc
-                goal_[0] = int(goal_[0] * 10)
-                goal_[1] = int(goal_[1] * 10)
+                goal_[0] = int(goal_[0])
+                goal_[1] = int(goal_[1])
                 vis_grid = vu.get_colored_map(np.rint(map_pred),
                                 self.collison_map[gx1:gx2, gy1:gy2],
                                 self.visited_vis[gx1:gx2, gy1:gy2],
                                 self.visited_gt[gx1:gx2, gy1:gy2],
-                                #goal,
-                                goal_,
+                                goal,
+                                #goal_,
                                 self.explored_map[gx1:gx2, gy1:gy2],
                                 self.explorable_map[gx1:gx2, gy1:gy2],
                                 self.map[gx1:gx2, gy1:gy2] *
@@ -747,11 +738,9 @@ class Exploration_Env(habitat.RLEnv):
                             (start_x - gy1*args.map_resolution/100.0,
                              start_y - gx1*args.map_resolution/100.0,
                              start_o),
-                            #  (
-                            #      object_cur_loc[0]- gy1*args.map_resolution/100.0,
-                            #       object_cur_loc[1] - gx1*args.map_resolution/100.0,
-                            #       start_o_gt
-                            #  ),
+                            # (object_cur_loc[0]- gy1*args.map_resolution/100.0,
+                            #  object_cur_loc[1] - gx1*args.map_resolution/100.0,
+                            #  start_o),
                             (start_x_gt - gy1*args.map_resolution/100.0,
                              start_y_gt - gx1*args.map_resolution/100.0,
                              start_o_gt),
@@ -771,7 +760,6 @@ class Exploration_Env(habitat.RLEnv):
                 vis_grid = np.flipud(vis_grid)
                 vu.visualize(self.figure, self.ax, self.obs, vis_grid[:,:,::-1],
                             (start_x_gt, start_y_gt, start_o_gt),
-                            # (goal_[0], goal_[1], start_o_gt),
                             (start_x_gt, start_y_gt, start_o_gt),
                             dump_dir, self.rank, self.episode_no,
                             self.timestep, args.visualize,
@@ -794,99 +782,32 @@ class Exploration_Env(habitat.RLEnv):
         agent_y = self._env.sim.get_agent_state().position.tolist()[1]*100.
         sim_map = self.map_obj.get_map(agent_y, -50., 50.0)
 
-        sim_map[sim_map > 0] = 1.
-
-        map_to_save = np.array(sim_map)
-        map_dir = "data/results/neural_slam"
-        np.save(
-             os.path.join(map_dir,'sim_map.npy'),
-             map_to_save
-        )
-
-        # get object sim location
-        # object_sim_pos = []
-        # for point in self.path[0].points[0]:
-        #     position = np.array([-point[2], -point[0]])
-        #     object_sim_pos.append(position)
-
-
-        # convert points to topdown map
-        points_topdown = []
-        bounds = self.habitat_env.sim.pathfinder.get_bounds()
-        min_x, min_y = self.map_obj.origin/100.0
-        # for pos in object_sim_pos:
-        #     px = (- pos[0] - min_x) * 20
-        #     py = (- pos[1] - min_y) * 20
-        #     points_topdown.append(np.array([px, py]))
-
-
-        # for point in points_topdown:
-        #     # sim_map[
-        #     #     int(point[1]) - 2 : int(point[1]) + 2,
-        #     #     int(point[0]) - 2  : int(point[0]) + 2
-        #     # ] = 5
-        #     sim_map[
-        #         int(point[1]), int(point[0])
-        #     ] = 5
-
-        
-        agent_state = super().habitat_env.sim.get_agent_state(0)
-        agent_x = -agent_state.position[2]
-        agent_y = -agent_state.position[0]
-        agent_x, agent_y = (-agent_x -min_x) * 20 , (-agent_y - min_y) * 20 
-        sim_map[
-            int(agent_y), int(agent_x)
-        ] = 5
-
-
-        print("==========================================================")
-
-        print(f"points_topdown: {points_topdown}")
-        print("==========================================================")
-        # min_x, min_y = self.map_obj.origin/100.0
-        # min_x, min_y = -min_x*20, -min_y*20
-        # range_x, range_y = self.map_obj.max/100. - self.map_obj.origin/100.
-
-        # sim_map[
-        #     int(min_x)-10: int(min_x) +10,
-        #     int(min_y)-10: int(min_y) + 10
-        # ] = 5        
-
-
-        print("==========================================================")
-        print(f"sim origin: { min_x, min_y}")
-        print(f"agent initial sim position: {self.get_sim_location()}")
-        print(f"agent local bound: {agent_y, agent_x}")
-        print("==========================================================")
-
-
-        map_dir = "data/results/neural_slam"
-        np.save(
-             os.path.join(map_dir,'sim_map_o.npy'),
-             sim_map
-        )
-
+        sim_map[sim_map > 0] = 1.       #(287,187)
 
         # Transform the map to align with the agent
-        min_x, min_y = self.map_obj.origin/100.0
-        x, y, o = self.get_sim_location()
-        x, y = -x - min_x, -y - min_y
-        range_x, range_y = self.map_obj.max/100. - self.map_obj.origin/100.
+        min_x, min_y = self.map_obj.origin/100.0        # (-8.53, -12.04)  sim map origin in sim coordinates
+        x, y, o = self.get_sim_location()       # return initial agent sim position (7.23, -1.55,0.68)
+        x, y = -x - min_x, -y - min_y       # (1.29, 13.59)
+        if self.x is None:
+            self.x, self.y, self.o = x, y, o
+
+        # self.map_obj.max = ([81,205]) origin([-853,-1204])
+        range_x, range_y = self.map_obj.max/100. - self.map_obj.origin/100.     #(9.34, 14.09) map size in meters?
 
         map_size = sim_map.shape
         scale = 2.
-        grid_size = int(scale*max(map_size))
-        grid_map = np.zeros((grid_size, grid_size))
+        grid_size = int(scale*max(map_size))      # 564
+        grid_map = np.zeros((grid_size, grid_size))     # initialize map as (564, 564)
+
+        
+        #!TODO: store all the object points while initialize topdown map.
+
 
         grid_map[(grid_size - map_size[0])//2:
                  (grid_size - map_size[0])//2 + map_size[0],
                  (grid_size - map_size[1])//2:
                  (grid_size - map_size[1])//2 + map_size[1]] = sim_map
 
-        np.save(
-             os.path.join(map_dir,'grid_map.npy'),
-             grid_map
-        )
 
         if map_size[0] > map_size[1]:
             st = torch.tensor([[
@@ -912,7 +833,7 @@ class Exploration_Env(habitat.RLEnv):
         translated = F.grid_sample(grid_map, trans_mat)
         rotated = F.grid_sample(translated, rot_mat)
 
-        episode_map = torch.zeros((full_map_size, full_map_size)).float()
+        episode_map = torch.zeros((full_map_size, full_map_size)).float()       # full_map_zise = 480
         if full_map_size > grid_size:
             episode_map[(full_map_size - grid_size)//2:
                         (full_map_size - grid_size)//2 + grid_size,
@@ -929,22 +850,11 @@ class Exploration_Env(habitat.RLEnv):
 
 
         episode_map = episode_map.numpy()
-        # episode_map[episode_map < 0] = 0.
-        # episode_map[episode_map == 5] = -1.
-        # episode_map[episode_map > 0] = 1.
-        # episode_map[episode_map == -1] = 5.
+        episode_map[episode_map > 0] = 1.
 
-        map_to_save = np.array(episode_map)
-        np.save(
-             os.path.join(map_dir,'episode_map_o.npy'),
-             map_to_save
-        )
-
-        obj_x, obj_y = self._get_topdown_point(full_map_size, 0)
-        print('\n')
-        print('===================')
-        print(obj_x, obj_y)
         
+
+
         return episode_map
 
 
@@ -1149,9 +1059,8 @@ class Exploration_Env(habitat.RLEnv):
                 rigid_obj_mgr.add_object_by_template_id(locobot_template_id)
             )
             #self.objects[i].motion_type = habitat_sim.physics.MotionType.KINEMATIC
-            #self.objects[i].translation = self.object_positions[2*i]
-            self.objects[i].translation = self.object_positions[0]
-            self.objects[i].collidable = False
+            self.objects[i].translation = self.object_positions[2*i]
+            self.objects[i].collidable = True
             #self.objects[i].path = self.path[i]
             print(f"added objects with objects id {self.objects[i].object_id}")
             self.object_scene_nodes.append(self.objects[i].root_scene_node)
@@ -1186,52 +1095,64 @@ class Exploration_Env(habitat.RLEnv):
 
         # get object sim location
         obj_x, obj_y = -self.objects[obj_id].translation.b, -self.objects[obj_id].translation.r
+        #obj_x_, obj_y_ = -self.objects[obj_id].translation.b, -self.objects[obj_id].translation.r
+        agent_state = self._env.sim.get_agent_state(0)
+        #obj_x, obj_y = -agent_state.position[2], -agent_state.position[0]
+
+        obj_sim_pos = []
+        for point in self.path[obj_id].points:
+            position = np.array([-point[2], -point[0]])
+            obj_sim_pos.append(position)
+
+        # object_sim_pos = []
         # for point in self.path[0].points:
         #     position = np.array([-point[2], -point[0]])
         #     object_sim_pos.append(position)
 
-        print('\n')
-        print('=======================================')
-        print(f'object sim location {obj_x, obj_y}')
-        print('=======================================')
+        # # convert points to topdown map
+        # points_topdown = []
+        # min_x, min_y = self.map_obj.origin/100.0
+        # for pos in object_sim_pos:
+        #     px = (- pos[0] - min_x) * 20
+        #     py = (- pos[1] - min_y) * 20
+        #     points_topdown.append(np.array([px, py]))
+
+
+            
+        # for point in points_topdown:
+        #     sim_map[
+        #         int(point[1]) - 2: int(point[1]) + 2,
+        #         int(point[0]) - 2: int(point[0]) + 2
+        #     ] = 2
 
         # convert points to topdown map
         min_x, min_y = self.map_obj.origin/100.0
-        #obj_x, obj_y = (-obj_x -min_x) * 20 , (-obj_y - min_y) * 20 
+        obj_x, obj_y = (-obj_x -min_x) * 20 , (-obj_y - min_y) * 20
+       # obj_x_, obj_y_ =  (-obj_x_ -min_x) * 20 , (-obj_y_ - min_y) * 20 
 
-        # agent_state = super().habitat_env.sim.get_agent_state(0)
-        # agent_x = -agent_state.position[2]
-        # agent_y = -agent_state.position[0]
-        # agent_x, agent_y = (-agent_x -min_x) * 20 , (-agent_y - min_y) * 20 
-        # sim_map[
-        #     int(agent_y), int(agent_x)
-        # ] = 5
-        agent_state = super().habitat_env.sim.get_agent_state(0)
-        obj_x, obj_y = -agent_state.position[2], -agent_state.position[0]
-        obj_x, obj_y = (-obj_x -min_x) * 20 , (-obj_y - min_y) * 20 
         if int(obj_x) <= 1:
             obj_x += 1
         if int(obj_y) <= 1:
             obj_y += 1
+
         sim_map[
             int(obj_y),
             int(obj_x)
-        ] = 5
+        ] = 10
 
-        print('=======================================')
-        print(f"object map position: {obj_x, obj_y}")
-        print('=======================================')
-
-        map_dir = "data/results/neural_slam"
-        np.save(
-             os.path.join(map_dir,'sim_map_i.npy'),
-             sim_map
-        )
+        # map_dir = "data/results/neural_slam"
+        # np.save(
+        #      os.path.join(map_dir,'sim_map_i.npy'),
+        #      sim_map
+        # )
 
 
         # Transform the map to align with the agent
         min_x, min_y = self.map_obj.origin/100.0
-        x, y, o = self.get_sim_location()
+        if self.x is not None:
+            x, y, o = self.x, self.y, self.o
+        else:
+            x, y, o = self.get_sim_location()
         x, y = -x - min_x, -y - min_y
         range_x, range_y = self.map_obj.max/100. - self.map_obj.origin/100.
 
@@ -1245,12 +1166,7 @@ class Exploration_Env(habitat.RLEnv):
                  (grid_size - map_size[1])//2:
                  (grid_size - map_size[1])//2 + map_size[1]] = sim_map
 
-        grid_map[grid_map!=5] = 0.
 
-        np.save(
-             os.path.join(map_dir,'grid_map_o.npy'),
-             grid_map
-        )
 
         if map_size[0] > map_size[1]:
             st = torch.tensor([[
@@ -1293,16 +1209,8 @@ class Exploration_Env(habitat.RLEnv):
 
 
         episode_map = episode_map.numpy()
-        # episode_map[episode_map < 0] = 0.
-        # episode_map[episode_map == 5] = -1.
-        # episode_map[episode_map > 0] = 5.
+        
+        cor_x, cor_y = int(np.where(episode_map==episode_map.max())[0]), int(np.where(episode_map==episode_map.max())[1])
 
 
-        map_to_save = np.array(episode_map)
-        np.save(
-             os.path.join(map_dir,'episode_map_i.npy'),
-             map_to_save
-        )
-
-
-        return int(np.where(episode_map==episode_map.max())[0]), int(np.where(episode_map==episode_map.max())[1])
+        return cor_x, cor_y
